@@ -5,6 +5,11 @@ export function formatBps(value: number): string {
   return `${sign}${value.toFixed(0)} bps`;
 }
 
+export function formatPercentFromBps(value: number): string {
+  const sign = value > 0 ? "+" : "";
+  return `${sign}${(value / 100).toFixed(2)}%`;
+}
+
 export function formatUsd(value: number): string {
   return new Intl.NumberFormat("en-US", {
     style: "currency",

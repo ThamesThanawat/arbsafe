@@ -3,7 +3,8 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "ArbSafe",
-  description: "Risk-adjusted arbitrage monitor for Solana users.",
+  description:
+    "Mock risk-adjusted arbitrage monitor for Solana prediction-market users.",
 };
 
 export const viewport: Viewport = {

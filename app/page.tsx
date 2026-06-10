@@ -1,4 +1,11 @@
-import { Activity, Gauge, ShieldCheck, TrendingUp } from "lucide-react";
+import {
+  Activity,
+  Gauge,
+  RadioTower,
+  ShieldCheck,
+  Smartphone,
+  TrendingUp,
+} from "lucide-react";
 import { OpportunityCard } from "@/components/OpportunityCard";
 import { opportunities } from "@/lib/mockOpportunities";
 import { scoreOpportunity } from "@/lib/scoring";
@@ -19,7 +26,7 @@ export default function Home() {
   ).length;
 
   return (
-    <main className="mx-auto min-h-screen w-full max-w-3xl px-4 py-5 sm:px-6 sm:py-8">
+    <main className="mx-auto min-h-screen w-full max-w-3xl overflow-hidden px-4 py-5 sm:px-6 sm:py-8">
       <header className="flex items-center justify-between gap-4">
         <div className="flex items-center gap-3">
           <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-zinc-950 text-white">
@@ -27,7 +34,7 @@ export default function Home() {
           </div>
           <div>
             <p className="text-xl font-black text-zinc-950">ArbSafe</p>
-            <p className="text-sm text-zinc-500">Mock Solana v1</p>
+            <p className="text-sm text-zinc-500">Mock PM arb v1</p>
           </div>
         </div>
         <span className="rounded-full border border-zinc-200 bg-white px-3 py-1 text-xs font-bold text-zinc-700">
@@ -40,12 +47,12 @@ export default function Home() {
           Not every spread is an opportunity.
         </p>
         <h1 className="mt-3 text-4xl font-black leading-none text-zinc-950 sm:text-5xl">
-          Risk-adjusted arbitrage monitor for Solana.
+          Prediction-market spreads, risk-adjusted.
         </h1>
         <p className="mt-4 max-w-2xl text-base leading-7 text-zinc-600">
-          ArbSafe ranks mock arbitrage spreads after fees, slippage, liquidity,
-          execution delay, venue risk, settlement mismatch, market rules, and
-          operational risk.
+          ArbSafe checks mock Kalshi (Solana) and Polymarket (via Jupiter)
+          opportunities after fees, slippage, liquidity, execution delay, and
+          settlement-rule mismatch.
         </p>
       </section>
 
@@ -79,11 +86,41 @@ export default function Home() {
         </div>
       </section>
 
-      <section className="mt-6 space-y-4 pb-8">
+      <section className="mt-6 space-y-4">
         {opportunities.map((opportunity) => (
           <OpportunityCard key={opportunity.id} opportunity={opportunity} />
         ))}
       </section>
+
+      <footer className="mt-6 rounded-lg border border-zinc-200 bg-white p-4 shadow-soft">
+        <div className="flex items-center gap-2">
+          <RadioTower aria-hidden="true" className="h-5 w-5 text-teal-700" />
+          <h2 className="text-lg font-black text-zinc-950">
+            Future infrastructure
+          </h2>
+        </div>
+        <div className="mt-4 grid gap-3 text-sm leading-6 text-zinc-600">
+          <p>
+            DFlow can be the future tokenized Kalshi and Solana
+            prediction-market data layer.
+          </p>
+          <p>
+            Jupiter Prediction can provide Kalshi + Polymarket market access in
+            a later version.
+          </p>
+          <p>
+            MagicBlock Oracles can become a low-latency price-feed layer for
+            time-sensitive monitoring.
+          </p>
+          <p className="flex gap-2 font-semibold text-zinc-700">
+            <Smartphone aria-hidden="true" className="mt-0.5 h-4 w-4 flex-none text-blue-600" />
+            Solana Mobile / Seeker is the mobile-first distribution path.
+          </p>
+        </div>
+        <p className="mt-4 rounded-lg bg-zinc-50 px-3 py-2 text-xs font-semibold leading-5 text-zinc-500">
+          Current MVP uses mock data only and does not execute trades.
+        </p>
+      </footer>
     </main>
   );
 }

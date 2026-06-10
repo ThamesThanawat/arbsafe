@@ -1,15 +1,11 @@
 import type {
   ArbitrageOpportunity,
+  GrossToNetLine,
   Recommendation,
   RiskLevel,
   ScoredOpportunity,
+  ScoreFactor,
 } from "./types";
-
-const riskPenalty: Record<RiskLevel, number> = {
-  low: 2,
-  medium: 10,
-  high: 24,
-};
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
@@ -37,6 +33,163 @@ function getDelayRisk(delaySeconds: number): RiskLevel {
   }
 
   return "low";
+}
+
+function getRiskBaseScore(level: RiskLevel): number {
+  switch (level) {
+    case "low":
+      return 92;
+    case "medium":
+      return 64;
+    case "high":
+      return 34;
+  }
+}
+
+function getLiquidityFactorScore(coverageRatio: number): number {
+  if (coverageRatio >= 12) {
+    return 92;
+  }
+
+  if (coverageRatio >= 8) {
+    return 82;
+  }
+
+  if (coverageRatio >= 4) {
+    return 65;
+  }
+
+  if (coverageRatio >= 2) {
+    return 42;
+  }
+
+  return 25;
+}
+
+function getExecutionFactorScore(
+  executionRisk: RiskLevel,
+  delayRisk: RiskLevel,
+): number {
+  const delayPenalty = {
+    low: 0,
+    medium: 8,
+    high: 14,
+  } satisfies Record<RiskLevel, number>;
+
+  return clamp(getRiskBaseScore(executionRisk) - delayPenalty[delayRisk], 0, 100);
+}
+
+function getFeeSlippageFactorScore(
+  opportunity: ArbitrageOpportunity,
+): number {
+  const feeAndSlippageRatio =
+    (opportunity.estimatedFeesBps + opportunity.estimatedSlippageBps) /
+    opportunity.grossSpreadBps;
+
+  return clamp(100 - feeAndSlippageRatio * 95, 0, 100);
+}
+
+function getSettlementFactorScore(opportunity: ArbitrageOpportunity): number {
+  const highestMismatch =
+    opportunity.settlementMismatchRisk === "high" ||
+    opportunity.marketRuleMismatchRisk === "high"
+      ? "high"
+      : opportunity.settlementMismatchRisk === "medium" ||
+          opportunity.marketRuleMismatchRisk === "medium"
+        ? "medium"
+        : "low";
+
+  const riskAdjustmentRatio =
+    opportunity.estimatedSettlementRuleRiskBps / opportunity.grossSpreadBps;
+
+  return clamp(
+    getRiskBaseScore(highestMismatch) - riskAdjustmentRatio * 55,
+    0,
+    100,
+  );
+}
+
+function buildScoreFactors({
+  opportunity,
+  liquidityCoverageRatio,
+  delayRisk,
+}: {
+  opportunity: ArbitrageOpportunity;
+  liquidityCoverageRatio: number;
+  delayRisk: RiskLevel;
+}): ScoreFactor[] {
+  const factors = [
+    {
+      label: "Liquidity",
+      weight: 30,
+      factorScore: getLiquidityFactorScore(liquidityCoverageRatio),
+      helper: `${liquidityCoverageRatio.toFixed(1)}x depth coverage versus target size.`,
+    },
+    {
+      label: "Execution risk",
+      weight: 25,
+      factorScore: getExecutionFactorScore(opportunity.executionRisk, delayRisk),
+      helper: `${opportunity.executionDelaySeconds}s mock route delay with ${opportunity.executionRisk} execution risk.`,
+    },
+    {
+      label: "Fee + slippage",
+      weight: 25,
+      factorScore: getFeeSlippageFactorScore(opportunity),
+      helper: `${(
+        opportunity.estimatedFeesBps + opportunity.estimatedSlippageBps
+      ).toFixed(0)} bps before liquidity and rule risk.`,
+    },
+    {
+      label: "Settlement / rule mismatch",
+      weight: 20,
+      factorScore: getSettlementFactorScore(opportunity),
+      helper: `${opportunity.settlementMismatchRisk} settlement risk and ${opportunity.marketRuleMismatchRisk} market-rule risk.`,
+    },
+  ];
+
+  return factors.map((factor) => ({
+    ...factor,
+    factorScore: Math.round(factor.factorScore),
+    contribution: Math.round((factor.factorScore * factor.weight) / 100),
+  }));
+}
+
+function buildGrossToNetLines(
+  opportunity: ArbitrageOpportunity,
+  netOpportunityBps: number,
+): GrossToNetLine[] {
+  return [
+    {
+      label: "Gross spread",
+      bps: opportunity.grossSpreadBps,
+      kind: "gross",
+    },
+    {
+      label: "Fees",
+      bps: -opportunity.estimatedFeesBps,
+      kind: "deduction",
+    },
+    {
+      label: "Slippage",
+      bps: -opportunity.estimatedSlippageBps,
+      kind: "deduction",
+    },
+    {
+      label: "Liquidity impact",
+      bps: -opportunity.estimatedLiquidityImpactBps,
+      kind: "deduction",
+    },
+    {
+      label: "Settlement / rule risk",
+      bps: -opportunity.estimatedSettlementRuleRiskBps,
+      kind: "deduction",
+    },
+    {
+      label: "Net estimate",
+      bps: netOpportunityBps,
+      kind: "net",
+    },
+  ];
 }
 
 function getRecommendation({
@@ -77,28 +230,26 @@ export function scoreOpportunity(
   const netOpportunityBps =
     opportunity.grossSpreadBps -
     opportunity.estimatedFeesBps -
-    opportunity.estimatedSlippageBps;
+    opportunity.estimatedSlippageBps -
+    opportunity.estimatedLiquidityImpactBps -
+    opportunity.estimatedSettlementRuleRiskBps;
 
   const liquidityCoverageRatio =
     opportunity.liquidityDepthUsd / opportunity.tradeSizeUsd;
   const liquidityRisk = getLiquidityRisk(liquidityCoverageRatio);
   const delayRisk = getDelayRisk(opportunity.executionDelaySeconds);
-
-  const riskInputs: RiskLevel[] = [
-    opportunity.executionRisk,
-    opportunity.timeSensitivity,
-    opportunity.venueRisk,
-    opportunity.settlementMismatchRisk,
-    opportunity.marketRuleMismatchRisk,
-    opportunity.operationalRisk,
-    liquidityRisk,
+  const scoreFactors = buildScoreFactors({
+    opportunity,
+    liquidityCoverageRatio,
     delayRisk,
-  ];
-
-  const totalRiskPenalty =
-    riskInputs.reduce((total, level) => total + riskPenalty[level], 0) * 0.45;
-  const spreadScore = clamp(netOpportunityBps * 0.35, -35, 35);
-  const arbSafeScore = Math.round(clamp(65 + spreadScore - totalRiskPenalty, 0, 100));
+  });
+  const arbSafeScore = Math.round(
+    clamp(
+      scoreFactors.reduce((total, factor) => total + factor.contribution, 0),
+      0,
+      100,
+    ),
+  );
 
   const recommendation = getRecommendation({
     netOpportunityBps,
@@ -112,6 +263,8 @@ export function scoreOpportunity(
     netOpportunityBps,
     arbSafeScore,
     recommendation,
+    grossToNetLines: buildGrossToNetLines(opportunity, netOpportunityBps),
+    scoreFactors,
     explanation: buildExplanation({
       opportunity,
       netOpportunityBps,
@@ -122,7 +275,7 @@ export function scoreOpportunity(
       delayRisk,
     }),
     riskChecks: buildRiskChecks(opportunity, liquidityRisk, delayRisk),
-    nextSteps: buildNextSteps(recommendation),
+    nextSteps: buildNextSteps(opportunity, recommendation),
     liquidityCoverageRatio,
     liquidityRisk,
     delayRisk,
@@ -148,21 +301,26 @@ function buildExplanation({
 }): string[] {
   const reasons: string[] = [];
   const costLoad =
-    (opportunity.estimatedFeesBps + opportunity.estimatedSlippageBps) /
+    (opportunity.estimatedFeesBps +
+      opportunity.estimatedSlippageBps +
+      opportunity.estimatedLiquidityImpactBps +
+      opportunity.estimatedSettlementRuleRiskBps) /
     opportunity.grossSpreadBps;
+
+  reasons.push(opportunity.whyScore);
 
   if (netOpportunityBps > 0) {
     reasons.push(
-      `Spread remains positive after fees and slippage at +${netOpportunityBps.toFixed(0)} bps.`,
+      `Estimated net spread remains positive at +${netOpportunityBps.toFixed(0)} bps after modeled costs and risk deductions.`,
     );
   } else {
     reasons.push(
-      `Fees and slippage turn the quoted spread negative at ${netOpportunityBps.toFixed(0)} bps.`,
+      `Modeled costs and risk deductions turn the quoted spread negative at ${netOpportunityBps.toFixed(0)} bps.`,
     );
   }
 
   if (costLoad >= 0.5) {
-    reasons.push("Estimated fees and slippage consume at least half of the gross spread.");
+    reasons.push("Estimated costs and risk deductions consume at least half of the gross spread.");
   }
 
   if (liquidityRisk === "high") {
@@ -182,6 +340,15 @@ function buildExplanation({
   if (delayRisk !== "low") {
     reasons.push(
       `Execution delay is ${delayRisk} because the route may take about ${opportunity.executionDelaySeconds}s.`,
+    );
+  }
+
+  if (
+    opportunity.settlementMismatchRisk !== "low" ||
+    opportunity.marketRuleMismatchRisk !== "low"
+  ) {
+    reasons.push(
+      "Kalshi and Polymarket may not settle under identical rules, timelines, data sources, or dispute processes.",
     );
   }
 
@@ -216,7 +383,7 @@ function buildRiskChecks(
 ): string[] {
   const checks = [
     "Confirm the spread is still visible on both venues before relying on the quote.",
-    "Recheck estimated fees and slippage for the intended position size.",
+    "Recheck estimated fees, slippage, liquidity impact, and rule risk for the intended position size.",
   ];
 
   if (liquidityRisk !== "low") {
@@ -225,6 +392,10 @@ function buildRiskChecks(
 
   if (delayRisk !== "low" || opportunity.timeSensitivity !== "low") {
     checks.push("Check whether the opportunity can survive the expected execution delay.");
+  }
+
+  if (opportunity.lockupLabel) {
+    checks.push(`Account for lockup timing: ${opportunity.lockupLabel}.`);
   }
 
   if (
@@ -241,11 +412,18 @@ function buildRiskChecks(
   return checks;
 }
 
-function buildNextSteps(recommendation: Recommendation): string[] {
+function buildNextSteps(
+  opportunity: ArbitrageOpportunity,
+  recommendation: Recommendation,
+): string[] {
+  if (opportunity.nextSteps.length > 0) {
+    return opportunity.nextSteps.slice(0, 2);
+  }
+
   if (recommendation === "Good opportunity") {
     return [
       "Keep monitoring spread decay and liquidity before making any decision.",
-      "Size conservatively and treat this as a due diligence signal, not execution advice.",
+      "Treat this as a due diligence signal, not financial advice.",
     ];
   }
 
